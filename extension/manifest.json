@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "PULT Browser Agent",
+  "version": "0.1.0",
+  "description": "Browser automation agent for PULT – AI-controlled actions on the current tab (open, click, type, scroll). Does not touch passwords or sensitive data.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "PULT"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}

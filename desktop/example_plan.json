@@ -1,0 +1,17 @@
+{
+  "steps": [
+    {
+      "action": "notify",
+      "title": "PULT",
+      "message": "Пример плана запущен"
+    },
+    {
+      "action": "open_url",
+      "url": "https://example.com"
+    },
+    {
+      "action": "wait",
+      "ms": 2000
+    }
+  ]
+}
