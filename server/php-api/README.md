@@ -21,8 +21,8 @@ Do not put this folder behind a public file index. The supplied `.htaccess` disa
 
 ## Requirements
 
-- PHP 8.0 or newer.
-- PHP PDO + pdo_mysql.
+- PHP 8.1 or newer.
+- PHP PDO + pdo_mysql + mbstring.
 - MySQL 5.7+ or a compatible MariaDB version with InnoDB and JSON column support.
 - An HTTPS certificate enabled for the domain.
 - A database and database user created in the hosting control panel.
