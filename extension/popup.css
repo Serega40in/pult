@@ -12,7 +12,7 @@ label { display:block; font-size:12px; font-weight:700; margin-bottom:7px; }
 select, textarea { width:100%; border:1px solid #d5dde4; border-radius:8px; padding:8px; background:white; color:#17212b; font:12px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; }
 select { min-width:0; flex:1; font-family:inherit; }
 textarea { resize:vertical; margin-top:7px; }
-button { border:0; border-radius:8px; padding:9px 11px; font:600 12px inherit; cursor:pointer; }
+button { border:0; border-radius:8px; padding:9px 11px; font:600 12px system-ui, sans-serif; cursor:pointer; }
 button:disabled { opacity:.45; cursor:not-allowed; }
 .primary { width:100%; margin-top:8px; background:#126b50; color:white; }
 .secondary { background:#eaf0f3; color:#23313c; }
