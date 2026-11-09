@@ -209,7 +209,7 @@ function normalizeApiBaseUrl(value) {
   if (parsed.username || parsed.password || parsed.search || parsed.hash) {
     throw new Error("Адрес API не должен содержать логин, пароль, параметры или фрагмент.");
   }
-  return parsed.toString().replace(/\\/+$/, "");
+  return parsed.toString().replace(/\/+$/, "");
 }
 
 async function apiRequest(settings, path, options = {}) {
