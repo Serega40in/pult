@@ -178,7 +178,7 @@ async function executeStep(tabId, step) {
   return results[0].result;
 }
 
-async function executePlan(plan) {
+async function executePlanLocally(plan) {
   validatePlan(plan);
   const tab = await resolveTargetTab();
   const results = [];
@@ -197,6 +197,128 @@ async function executePlan(plan) {
   return summary;
 }
 
+
+function normalizeApiBaseUrl(value) {
+  let parsed;
+  try { parsed = new URL(String(value || "").trim()); }
+  catch { throw new Error("Укажи корректный HTTPS-адрес PULT API."); }
+  const localHost = ["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname);
+  if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && localHost)) {
+    throw new Error("PULT API должен использовать HTTPS. HTTP разрешён только для localhost при разработке.");
+  }
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw new Error("Адрес API не должен содержать логин, пароль, параметры или фрагмент.");
+  }
+  return parsed.toString().replace(/\\/+$/, "");
+}
+
+async function apiRequest(settings, path, options = {}) {
+  const headers = { "Content-Type": "application/json", "Accept": "application/json" };
+  if (settings.token) headers.Authorization = "Bearer " + settings.token;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = await fetch(settings.baseUrl + path, {
+      method: options.method || "POST",
+      headers,
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      cache: "no-store",
+      credentials: "omit",
+      redirect: "error",
+      signal: controller.signal
+    });
+    let payload;
+    try { payload = await response.json(); }
+    catch { throw new Error("PULT API вернул не JSON. Проверь URL и настройки сервера."); }
+    if (!response.ok || !payload || payload.ok !== true) {
+      const error = payload && payload.error;
+      throw new Error((error && error.message) || ("Ошибка PULT API: HTTP " + response.status));
+    }
+    return payload.data || {};
+  } catch (error) {
+    if (error && error.name === "AbortError") throw new Error("PULT API не ответил за 15 секунд.");
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function getApiSettings() {
+  const stored = await chrome.storage.local.get(["apiBaseUrl", "apiDeviceToken", "apiDeviceId", "apiDeviceName"]);
+  return {
+    baseUrl: stored.apiBaseUrl || "",
+    token: stored.apiDeviceToken || "",
+    deviceId: stored.apiDeviceId || "",
+    deviceName: stored.apiDeviceName || ""
+  };
+}
+
+async function pairApiDevice(message) {
+  const baseUrl = normalizeApiBaseUrl(message.baseUrl);
+  const pairingSecret = String(message.pairingSecret || "").trim();
+  const deviceName = String(message.deviceName || "PULT Chrome").trim().slice(0, 120);
+  if (pairingSecret.length < 32) throw new Error("Код подключения должен содержать не менее 32 символов.");
+  const data = await apiRequest({ baseUrl, token: "" }, "/v1/devices/pair", {
+    body: { pairing_secret: pairingSecret, device_name: deviceName }
+  });
+  if (!data.device_token || !data.device_id) throw new Error("Сервер не вернул данные подключённого устройства.");
+  await chrome.storage.local.set({
+    apiBaseUrl: baseUrl,
+    apiDeviceToken: data.device_token,
+    apiDeviceId: data.device_id,
+    apiDeviceName: data.device_name || deviceName
+  });
+  return { connected: true, deviceId: data.device_id, deviceName: data.device_name || deviceName };
+}
+
+async function executePlan(plan) {
+  validatePlan(plan);
+  const settings = await getApiSettings();
+  if (!settings.baseUrl || !settings.token) {
+    return executePlanLocally(plan);
+  }
+
+  const created = await apiRequest(settings, "/v1/jobs", {
+    body: { client_name: "pult-chatgpt-bridge", plan }
+  });
+  if (!created.job_id) throw new Error("PULT API не вернул идентификатор задания.");
+
+  await apiRequest(settings, "/v1/jobs/" + created.job_id + "/approve", { body: {} });
+  const claimed = await apiRequest(settings, "/v1/jobs/claim", { body: { job_id: created.job_id } });
+  if (!claimed.plan || !Array.isArray(claimed.plan.steps)) {
+    throw new Error("PULT API вернул задание без корректного плана.");
+  }
+
+  let result;
+  try {
+    result = await executePlanLocally(claimed.plan);
+  } catch (error) {
+    result = {
+      ok: false,
+      tab: {},
+      results: [{ action: "execute", ok: false, error: error.message || String(error) }],
+      completed_at: new Date().toISOString()
+    };
+  }
+
+  try {
+    const completed = await apiRequest(settings, "/v1/jobs/" + created.job_id + "/complete", {
+      body: { result }
+    });
+    result.api = { connected: true, job_id: created.job_id, status: completed.status || "completed" };
+  } catch (error) {
+    result.api = {
+      connected: true,
+      job_id: created.job_id,
+      sync_error: error.message || String(error)
+    };
+    await chrome.storage.local.set({ pultUnsyncedResult: { jobId: created.job_id, result } });
+  }
+
+  await chrome.storage.local.set({ lastResult: result });
+  return result;
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   (async () => {
     if (message && message.type === "PULT_LIST_TABS") {
@@ -213,6 +335,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message && message.type === "PULT_READ_PAGE") {
       const tab = await resolveTargetTab();
       return { ok: true, tab: { id: tab.id, title: tab.title || "", url: tab.url || "" }, page: await readPage(tab.id) };
+    }
+    if (message && message.type === "PULT_API_STATUS") {
+      const settings = await getApiSettings();
+      return { ok: true, connected: Boolean(settings.baseUrl && settings.token), baseUrl: settings.baseUrl, deviceId: settings.deviceId, deviceName: settings.deviceName };
+    }
+    if (message && message.type === "PULT_API_PAIR") {
+      return { ok: true, device: await pairApiDevice(message) };
+    }
+    if (message && message.type === "PULT_API_DISCONNECT") {
+      await chrome.storage.local.remove(["apiBaseUrl", "apiDeviceToken", "apiDeviceId", "apiDeviceName"]);
+      return { ok: true, disconnected: true };
     }
     if (message && message.type === "PULT_EXECUTE_PLAN") return { ok: true, result: await executePlan(message.plan) };
     if (message && message.type === "PULT_GET_LAST_RESULT") {
