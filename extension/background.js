@@ -4,10 +4,11 @@ let bridgeSocket = null;
 let reconnectTimer = null;
 let reconnectDelay = 1000;
 let intentionallyClosed = false;
+let actionQueue = Promise.resolve();
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "EXECUTE_PLAN") {
-    executePlan(message.plan)
+    enqueuePlan(message.plan)
       .then((result) => sendResponse({ success: true, result }))
       .catch((error) => sendResponse({ success: false, error: error.message }));
     return true;
@@ -142,12 +143,19 @@ function scheduleReconnect() {
 
 async function handleBridgeCommand(message) {
   try {
-    const result = await executePlan({ steps: message.steps });
+    const result = await enqueuePlan({ steps: message.steps });
     const failed = result.find((item) => item && item.error);
     return { ok: !failed, results: result, error: failed?.error || null };
   } catch (error) {
     return { ok: false, results: [], error: error.message };
   }
+}
+
+function enqueuePlan(plan) {
+  const current = actionQueue.then(() => executePlan(plan));
+  // Keep the queue usable after a failed command.
+  actionQueue = current.catch(() => {});
+  return current;
 }
 
 async function executePlan(plan) {
