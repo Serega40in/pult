@@ -13,6 +13,19 @@
       <div><h1>PULT Lite</h1><p>Управление вкладкой через ChatGPT</p></div>
     </header>
     <section>
+      <label for="apiUrl">PULT API — адрес сервера</label>
+      <input id="apiUrl" type="url" placeholder="https://example.com/pult-api">
+      <label for="deviceName">Название устройства</label>
+      <input id="deviceName" type="text" value="PULT Chrome" maxlength="120">
+      <label for="pairingSecret">Код первичного подключения</label>
+      <input id="pairingSecret" type="password" autocomplete="off" placeholder="Вводится один раз">
+      <div class="line api-actions">
+        <button id="apiConnect" class="primary">Подключить API</button>
+        <button id="apiDisconnect" class="secondary" disabled>Отключить</button>
+      </div>
+      <div id="apiStatus" class="muted">Локальный режим. API пока не подключён.</div>
+    </section>
+    <section>
       <label for="target">Вкладка для управления</label>
       <div class="line"><select id="target"></select><button id="refresh" class="secondary" title="Обновить список">↻</button></div>
       <div id="selectedUrl" class="muted"></div>
