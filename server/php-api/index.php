@@ -35,6 +35,11 @@ function fail(int $status, string $code, string $message): never
     ]);
 }
 
+set_exception_handler(static function (Throwable $exception): void {
+    error_log('PULT API unhandled exception: ' . $exception->getMessage());
+    fail(500, 'INTERNAL_ERROR', 'An unexpected error occurred in the PULT API.');
+});
+
 function requestMethod(): string
 {
     return strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
