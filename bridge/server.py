@@ -153,7 +153,7 @@ async def browser_websocket(websocket: WebSocket) -> None:
     try:
         auth = await asyncio.wait_for(websocket.receive_json(), timeout=8)
         supplied = auth.get("token", "") if isinstance(auth, dict) else ""
-        if auth.get("type") != "auth" or not secrets.compare_digest(str(supplied), EXTENSION_TOKEN):
+        if not isinstance(auth, dict) or auth.get("type") != "auth" or not secrets.compare_digest(str(supplied), EXTENSION_TOKEN):
             await websocket.close(code=1008, reason="Authentication failed")
             return
 
