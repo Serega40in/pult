@@ -1,0 +1,4 @@
+# Keep server credentials and generated configuration out of Git.
+config.php
+*.log
+.DS_Store
