@@ -1,0 +1,10 @@
+Options -Indexes
+
+<FilesMatch "^(config\\.php|config\\.example\\.php|schema\\.sql|README\\.md)$">
+    Require all denied
+</FilesMatch>
+
+RewriteEngine On
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.php [QSA,L]
