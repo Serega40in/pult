@@ -1,23 +1,27 @@
-<!DOCTYPE html>
-<html>
+<!doctype html>
+<html lang="ru">
 <head>
   <meta charset="utf-8">
   <style>
-    body { font-family: system-ui, sans-serif; width: 320px; padding: 12px; margin: 0; }
+    body { font-family: system-ui, sans-serif; width: 340px; padding: 12px; margin: 0; color: #172033; }
     h1 { font-size: 16px; margin: 0 0 8px; }
-    p { font-size: 13px; color: #555; margin: 0 0 12px; }
+    p { font-size: 12px; color: #5b6577; margin: 0 0 10px; line-height: 1.4; }
     button { width: 100%; padding: 8px; margin: 4px 0; cursor: pointer; }
-    textarea { width: 100%; height: 80px; font-size: 12px; }
-    .status { font-size: 12px; margin-top: 8px; color: #0a0; }
-    .error { color: #c00; }
+    textarea { box-sizing: border-box; width: 100%; height: 80px; font-size: 12px; }
+    .status { font-size: 12px; margin: 8px 0; color: #147547; }
+    .error { color: #b42318; }
+    .secondary { background: #edf2f7; border: 1px solid #cbd5e1; border-radius: 6px; }
   </style>
 </head>
 <body>
   <h1>PULT Browser Agent</h1>
-  <p>Вставь JSON-план от ИИ и нажми «Выполнить». Действия только на текущей вкладке.</p>
+  <p id="bridgeStatus" class="status">Проверяю подключение…</p>
+  <button id="grantSite" class="secondary">Разрешить доступ к этому сайту</button>
+  <button id="settings" class="secondary">Настройки Bridge</button>
+  <p>Ручной режим: вставь JSON-план и запусти его на текущей вкладке.</p>
   <textarea id="plan" placeholder='{"steps":[{"action":"navigate","url":"https://example.com"},{"action":"scroll","y":300}]}'></textarea>
   <button id="run">Выполнить план</button>
-  <button id="example">Пример</button>
+  <button id="example" class="secondary">Пример</button>
   <div id="status" class="status"></div>
   <script src="popup.js"></script>
 </body>
