@@ -1,6 +1,6 @@
 Options -Indexes
 
-<FilesMatch "^(config\\.php|config\\.example\\.php|schema\\.sql|README\\.md)$">
+<FilesMatch "^(config|schema|README)">
     Require all denied
 </FilesMatch>
 
