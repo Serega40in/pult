@@ -1,27 +1,21 @@
 {
   "manifest_version": 3,
-  "name": "PULT Browser Agent",
-  "version": "0.1.0",
-  "description": "Browser automation agent for PULT – AI-controlled actions on the current tab (open, click, type, scroll). Does not touch passwords or sensitive data.",
-  "permissions": [
-    "activeTab",
-    "scripting",
-    "storage"
-  ],
-  "host_permissions": [
-    "<all_urls>"
-  ],
+  "name": "PULT Lite — ChatGPT Browser Control",
+  "version": "0.2.0",
+  "description": "Простой мост между ChatGPT и вкладками Chrome. Выполняет только явные команды PULT после нажатия пользователем.",
+  "permissions": ["storage", "tabs", "scripting", "clipboardWrite"],
+  "host_permissions": ["http://*/*", "https://*/*"],
   "action": {
-    "default_popup": "popup.html",
-    "default_title": "PULT"
+    "default_title": "PULT Lite",
+    "default_popup": "popup.html"
   },
   "background": {
     "service_worker": "background.js"
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["content.js"],
+      "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
+      "js": ["chatgpt.js"],
       "run_at": "document_idle"
     }
   ]
