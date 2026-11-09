@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "PULT Lite — ChatGPT Browser Control",
-  "version": "0.2.0",
-  "description": "Простой мост между ChatGPT и вкладками Chrome. Выполняет только явные команды PULT после нажатия пользователем.",
+  "version": "0.3.0",
+  "description": "Мост между ChatGPT, PHP API PULT и вкладками Chrome. Выполняет только проверенные команды после явного нажатия пользователем.",
   "permissions": ["storage", "tabs", "scripting", "clipboardWrite"],
   "host_permissions": ["http://*/*", "https://*/*"],
   "action": {
