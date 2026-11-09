@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>PULT — настройки Bridge</title>
+  <style>
+    body{font:14px system-ui,sans-serif;max-width:620px;margin:40px auto;padding:0 20px;color:#172033}
+    h1{font-size:24px;margin-bottom:8px}p{color:#5b6577;line-height:1.5}
+    label{display:block;font-weight:600;margin:18px 0 6px}
+    input{box-sizing:border-box;width:100%;padding:11px;border:1px solid #cbd2dc;border-radius:8px;font:14px system-ui}
+    button{margin-top:18px;padding:11px 18px;border:0;border-radius:8px;background:#164e63;color:white;font-weight:600;cursor:pointer}
+    #status{margin-top:14px;color:#147547}
+  </style>
+</head>
+<body>
+  <h1>PULT Bridge</h1>
+  <p>Укажи локальный адрес сервера и отдельный токен расширения. API-токен ИИ-клиента сюда вводить не нужно.</p>
+  <label for="url">WebSocket адрес</label>
+  <input id="url" value="ws://127.0.0.1:8765/v1/browser/ws">
+  <label for="token">PULT_EXTENSION_TOKEN</label>
+  <input id="token" type="password" autocomplete="off" placeholder="Токен расширения">
+  <button id="save">Сохранить и подключить</button>
+  <div id="status" role="status"></div>
+  <script src="options.js"></script>
+</body>
+</html>
