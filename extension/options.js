@@ -12,8 +12,8 @@ document.getElementById("save").addEventListener("click", async () => {
   const bridgeUrl = urlEl.value.trim();
   const bridgeToken = tokenEl.value.trim();
 
-  if (!bridgeUrl.startsWith("ws://127.0.0.1:") && !bridgeUrl.startsWith("wss://")) {
-    statusEl.textContent = "Для локального режима используй ws://127.0.0.1:8765/...";
+  if (bridgeUrl !== "ws://127.0.0.1:8765/v1/browser/ws") {
+    statusEl.textContent = "В MVP разрешён только локальный адрес ws://127.0.0.1:8765/v1/browser/ws.";
     return;
   }
   if (!bridgeToken) {
