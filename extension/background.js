@@ -197,12 +197,19 @@ async function executeStep(tabId, step) {
         func: (selector, text) => {
           const el = document.querySelector(selector);
           if (!el) return { error: `Element not found: ${selector}` };
+          if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el.isContentEditable)) {
+            return { error: "Target must be an input, textarea, or contenteditable element" };
+          }
+          if (el instanceof HTMLInputElement && ["password", "hidden"].includes(el.type)) {
+            return { error: "PULT will not type into password or hidden fields" };
+          }
           el.focus();
-          if ("value" in el) {
-            const proto = el instanceof HTMLTextAreaElement
-              ? HTMLTextAreaElement.prototype
-              : HTMLInputElement.prototype;
-            const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+          if (el instanceof HTMLTextAreaElement) {
+            const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+            if (setter) setter.call(el, text);
+            else el.value = text;
+          } else if (el instanceof HTMLInputElement) {
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
             if (setter) setter.call(el, text);
             else el.value = text;
           } else {
