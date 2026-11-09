@@ -8,6 +8,14 @@ const runButton = document.getElementById("run");
 const resultBox = document.getElementById("result");
 const selectedUrl = document.getElementById("selectedUrl");
 
+const apiUrl = document.getElementById("apiUrl");
+const deviceName = document.getElementById("deviceName");
+const pairingSecret = document.getElementById("pairingSecret");
+const apiConnect = document.getElementById("apiConnect");
+const apiDisconnect = document.getElementById("apiDisconnect");
+const apiStatus = document.getElementById("apiStatus");
+
+
 function showResult(value) {
   resultBox.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
 }
@@ -70,4 +78,56 @@ runButton.addEventListener("click", async () => {
   } catch (error) { showResult(error.message); }
   finally { runButton.disabled = false; runButton.textContent = "Проверить и выполнить"; }
 });
+
+async function refreshApiStatus() {
+  try {
+    const state = await send({ type: "PULT_API_STATUS" });
+    if (state.baseUrl) apiUrl.value = state.baseUrl;
+    if (state.deviceName) deviceName.value = state.deviceName;
+    apiDisconnect.disabled = !state.connected;
+    apiConnect.textContent = state.connected ? "Переподключить" : "Подключить API";
+    pairingSecret.disabled = false;
+    apiStatus.textContent = state.connected
+      ? "✓ Подключено: " + (state.deviceName || "PULT Chrome") + " · " + state.baseUrl
+      : "Локальный режим. API пока не подключён.";
+  } catch (error) {
+    apiStatus.textContent = "Не удалось проверить API: " + error.message;
+  }
+}
+
+apiConnect.addEventListener("click", async () => {
+  apiConnect.disabled = true;
+  apiConnect.textContent = "Подключаю…";
+  try {
+    const result = await send({
+      type: "PULT_API_PAIR",
+      baseUrl: apiUrl.value,
+      deviceName: deviceName.value,
+      pairingSecret: pairingSecret.value
+    });
+    pairingSecret.value = "";
+    await refreshApiStatus();
+    showResult("PULT API подключён. Устройство зарегистрировано: " + result.device.deviceName);
+  } catch (error) {
+    showResult("Не удалось подключить PULT API: " + error.message);
+    apiStatus.textContent = error.message;
+  } finally {
+    apiConnect.disabled = false;
+    if (apiConnect.textContent === "Подключаю…") apiConnect.textContent = "Подключить API";
+  }
+});
+
+apiDisconnect.addEventListener("click", async () => {
+  apiDisconnect.disabled = true;
+  try {
+    await send({ type: "PULT_API_DISCONNECT" });
+    await refreshApiStatus();
+    showResult("PULT API отключён на этом устройстве. Локальный режим продолжает работать.");
+  } catch (error) {
+    showResult(error.message);
+    apiDisconnect.disabled = false;
+  }
+});
+
 refreshTabs();
+refreshApiStatus();
