@@ -23,6 +23,6 @@ return [
     ],
 
     'max_request_bytes' => 131072,
-    'max_result_bytes' => 65536,
+    'max_result_bytes' => 131072,
     'lease_seconds' => 90,
 ];
