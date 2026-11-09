@@ -22,8 +22,7 @@ document.getElementById("save").addEventListener("click", async () => {
   }
 
   await chrome.storage.local.set({ bridgeUrl, bridgeToken });
-  statusEl.textContent = "Сохранено. Перезапускаю подключение…";
-  chrome.runtime.sendMessage({ type: "PULT_RECONNECT" }).catch(() => {});
+  statusEl.textContent = "Сохранено. Расширение подключается к локальному Bridge…";
 });
 
 loadSettings().catch((error) => {
