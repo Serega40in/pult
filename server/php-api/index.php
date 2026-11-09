@@ -343,14 +343,18 @@ if ($method === 'POST' && $path === '/v1/jobs/claim') {
             fail(409, 'JOB_NOT_READY', 'Job is not queued, not approved, or belongs to another device.');
         }
         $leaseSeconds = max(30, min(300, (int)($config['lease_seconds'] ?? 90)));
+        $leaseExpiresAt = (new DateTimeImmutable('now', new DateTimeZone('UTC')))
+            ->modify('+' . $leaseSeconds . ' seconds')
+            ->format('Y-m-d H:i:s');
         $update = $pdo->prepare(
             'UPDATE pult_jobs SET status = "claimed", claimed_at = UTC_TIMESTAMP(),
-             lease_expires_at = DATE_ADD(UTC_TIMESTAMP(), INTERVAL :lease_seconds SECOND)
+             lease_expires_at = :lease_expires_at
              WHERE job_id = :job_id AND status = "queued"'
         );
-        $update->bindValue(':lease_seconds', $leaseSeconds, PDO::PARAM_INT);
-        $update->bindValue(':job_id', $jobId, PDO::PARAM_STR);
-        $update->execute();
+        $update->execute([
+            'lease_expires_at' => $leaseExpiresAt,
+            'job_id' => $jobId,
+        ]);
         $pdo->commit();
         event($pdo, $deviceId, $jobId, 'job.claimed', ['lease_seconds' => $leaseSeconds]);
         ok([
