@@ -252,7 +252,9 @@ $path = requestPath();
 $method = requestMethod();
 
 if ($method === 'GET' && $path === '/v1/health') {
-    ok(['service' => 'PULT API', 'api_version' => '1', 'status' => 'ready']);
+    $healthDb = db($config);
+    $healthDb->query('SELECT 1');
+    ok(['service' => 'PULT API', 'api_version' => '1', 'status' => 'ready', 'database' => 'ok']);
 }
 
 if ($method === 'POST' && $path === '/v1/devices/pair') {
