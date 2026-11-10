@@ -3,15 +3,17 @@ name: PULT source checks
 on:
   pull_request:
     paths:
-      - "server/php-api/**"
       - "extension/**"
+      - "supabase/functions/qun-agent-core/**"
+      - "supabase/migrations/**"
       - ".github/workflows/pult-source-checks.yml"
   push:
     branches:
       - feat/pult-agent-command-hub
     paths:
-      - "server/php-api/**"
       - "extension/**"
+      - "supabase/functions/qun-agent-core/**"
+      - "supabase/migrations/**"
       - ".github/workflows/pult-source-checks.yml"
 
 permissions:
@@ -23,18 +25,6 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
-
-      - name: Set up PHP
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: "8.2"
-          extensions: mbstring, pdo_mysql
-          coverage: none
-
-      - name: Check PHP syntax
-        run: |
-          php -l server/php-api/index.php
-          php -l server/php-api/config.example.php
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -49,3 +39,11 @@ jobs:
 
       - name: Check extension manifest JSON
         run: node -e "JSON.parse(require('fs').readFileSync('extension/manifest.json', 'utf8'))"
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Check QUN Agent Core TypeScript
+        run: deno check --no-lock --config supabase/functions/qun-agent-core/deno.json supabase/functions/qun-agent-core/index.ts
