@@ -9,12 +9,20 @@ const resultBox = document.getElementById("result");
 const selectedUrl = document.getElementById("selectedUrl");
 
 const apiUrl = document.getElementById("apiUrl");
+const deviceId = document.getElementById("deviceId");
 const deviceName = document.getElementById("deviceName");
 const pairingSecret = document.getElementById("pairingSecret");
 const apiConnect = document.getElementById("apiConnect");
 const apiDisconnect = document.getElementById("apiDisconnect");
 const apiStatus = document.getElementById("apiStatus");
 
+const queueRefreshButton = document.getElementById("queueRefresh");
+const queueStatus = document.getElementById("queueStatus");
+const queuePreview = document.getElementById("queuePreview");
+const queueExecute = document.getElementById("queueExecute");
+const queueReject = document.getElementById("queueReject");
+let pendingCommand = null;
+let pendingValidationError = null;
 
 function showResult(value) {
   resultBox.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
@@ -56,7 +64,7 @@ readButton.addEventListener("click", async () => {
     const response = await send({ type: "PULT_READ_PAGE" });
     pageText.value = "Страница: " + response.page.title + "\nURL: " + response.page.url + "\n\n" + response.page.text;
     copyButton.disabled = false;
-    showResult("Страница прочитана. Скопируй её и вставь в чат, чтобы я мог продолжить работу с её содержимым.");
+    showResult("Страница прочитана. Скопируй её и вставь в чат.");
   } catch (error) { showResult(error.message); }
   finally { readButton.disabled = false; readButton.textContent = "Прочитать страницу"; }
 });
@@ -73,7 +81,7 @@ runButton.addEventListener("click", async () => {
   runButton.disabled = true;
   runButton.textContent = "Выполняю…";
   try {
-    const response = await send({ type: "PULT_EXECUTE_PLAN", plan: plan });
+    const response = await send({ type: "PULT_EXECUTE_PLAN", plan });
     showResult(response.result);
   } catch (error) { showResult(error.message); }
   finally { runButton.disabled = false; runButton.textContent = "Проверить и выполнить"; }
@@ -83,15 +91,62 @@ async function refreshApiStatus() {
   try {
     const state = await send({ type: "PULT_API_STATUS" });
     if (state.baseUrl) apiUrl.value = state.baseUrl;
+    if (state.deviceId) deviceId.value = state.deviceId;
     if (state.deviceName) deviceName.value = state.deviceName;
     apiDisconnect.disabled = !state.connected;
-    apiConnect.textContent = state.connected ? "Переподключить" : "Подключить API";
-    pairingSecret.disabled = false;
+    apiConnect.textContent = state.connected ? "Переподключить" : "Подключить Supabase";
     apiStatus.textContent = state.connected
-      ? "✓ Подключено: " + (state.deviceName || "PULT Chrome") + " · " + state.baseUrl
-      : "Локальный режим. API пока не подключён.";
+      ? "✓ Подключено к QUN Agent Core: " + (state.deviceName || state.deviceId) + " · " + state.baseUrl
+      : "Локальный режим. Подключение к Supabase не настроено.";
   } catch (error) {
-    apiStatus.textContent = "Не удалось проверить API: " + error.message;
+    apiStatus.textContent = "Не удалось проверить подключение: " + error.message;
+  }
+}
+
+function renderPendingCommand(command, validationError) {
+  pendingCommand = command || null;
+  pendingValidationError = validationError || null;
+  if (!pendingCommand) {
+    queueStatus.textContent = "Очередь пуста. Новые задания появятся здесь.";
+    queuePreview.textContent = "Нет ожидающих заданий.";
+    queueExecute.disabled = true;
+    queueReject.disabled = true;
+    return;
+  }
+  queueStatus.textContent = "Задание " + pendingCommand.command_id + " · " + pendingCommand.action + ". Проверь план перед выполнением.";
+  queuePreview.textContent = JSON.stringify({
+    command_id: pendingCommand.command_id,
+    action: pendingCommand.action,
+    args: pendingCommand.args,
+    created_at: pendingCommand.created_at,
+    validation_error: pendingValidationError
+  }, null, 2);
+  queueExecute.disabled = Boolean(pendingValidationError);
+  queueReject.disabled = false;
+}
+
+async function refreshAgentQueue() {
+  queueRefreshButton.disabled = true;
+  queueRefreshButton.textContent = "Проверяю…";
+  try {
+    const response = await send({ type: "PULT_AGENT_PEEK" });
+    if (!response.connected) {
+      renderPendingCommand(null, null);
+      queueStatus.textContent = "Сначала подключи PULT к Supabase.";
+      return;
+    }
+    if (response.error) {
+      renderPendingCommand(null, null);
+      queueStatus.textContent = "Ошибка очереди: " + response.error;
+      return;
+    }
+    renderPendingCommand(response.command, response.validationError);
+  } catch (error) {
+    renderPendingCommand(null, null);
+    queueStatus.textContent = "Не удалось проверить очередь: " + error.message;
+  } finally {
+    queueRefreshButton.disabled = false;
+    queueRefreshButton.textContent = "Проверить очередь";
   }
 }
 
@@ -102,18 +157,20 @@ apiConnect.addEventListener("click", async () => {
     const result = await send({
       type: "PULT_API_PAIR",
       baseUrl: apiUrl.value,
+      deviceId: deviceId.value,
       deviceName: deviceName.value,
-      pairingSecret: pairingSecret.value
+      pairingCode: pairingSecret.value
     });
     pairingSecret.value = "";
     await refreshApiStatus();
-    showResult("PULT API подключён. Устройство зарегистрировано: " + result.device.deviceName);
+    showResult("PULT подключён к Supabase. Устройство: " + result.device.deviceName);
+    await refreshAgentQueue();
   } catch (error) {
-    showResult("Не удалось подключить PULT API: " + error.message);
+    showResult("Не удалось подключить PULT: " + error.message);
     apiStatus.textContent = error.message;
   } finally {
     apiConnect.disabled = false;
-    if (apiConnect.textContent === "Подключаю…") apiConnect.textContent = "Подключить API";
+    if (apiConnect.textContent === "Подключаю…") apiConnect.textContent = "Подключить Supabase";
   }
 });
 
@@ -122,12 +179,53 @@ apiDisconnect.addEventListener("click", async () => {
   try {
     await send({ type: "PULT_API_DISCONNECT" });
     await refreshApiStatus();
-    showResult("PULT API отключён на этом устройстве. Локальный режим продолжает работать.");
+    renderPendingCommand(null, null);
+    showResult("PULT отключён. Локальное выполнение команд продолжает работать.");
   } catch (error) {
-    showResult(error.message);
+    showResult("Не удалось отозвать подключение: " + error.message);
     apiDisconnect.disabled = false;
+  }
+});
+
+queueRefreshButton.addEventListener("click", refreshAgentQueue);
+
+queueExecute.addEventListener("click", async () => {
+  if (!pendingCommand || pendingValidationError) return;
+  const command = pendingCommand;
+  queueExecute.disabled = true;
+  queueReject.disabled = true;
+  queueExecute.textContent = "Выполняю…";
+  try {
+    const response = await send({
+      type: "PULT_AGENT_EXECUTE_PENDING",
+      commandId: command.command_id
+    });
+    showResult(response.result);
+    renderPendingCommand(null, null);
+    await refreshAgentQueue();
+  } catch (error) {
+    showResult("Не удалось выполнить задание: " + error.message);
+    await refreshAgentQueue();
+  } finally {
+    queueExecute.textContent = "Подтвердить и выполнить";
+  }
+});
+
+queueReject.addEventListener("click", async () => {
+  if (!pendingCommand) return;
+  queueReject.disabled = true;
+  queueExecute.disabled = true;
+  try {
+    await send({ type: "PULT_AGENT_REJECT", commandId: pendingCommand.command_id });
+    showResult("Задание отклонено.");
+    renderPendingCommand(null, null);
+    await refreshAgentQueue();
+  } catch (error) {
+    showResult("Не удалось отклонить задание: " + error.message);
+    await refreshAgentQueue();
   }
 });
 
 refreshTabs();
 refreshApiStatus();
+refreshAgentQueue();
