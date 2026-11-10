@@ -751,6 +751,19 @@ async function handlePultApi(req: Request, path: string): Promise<Response> {
     return json({ ok: true, commandId, status: "cancelled" });
   }
 
+  if (path === "/pult/disconnect") {
+    const { data, error } = await db.from("qun_agent_devices").update({
+      status: "offline",
+      revoked_at: now,
+      updated_at: now,
+    }).eq("device_id", deviceId).eq("token_hash", tokenHash).is("revoked_at", null)
+      .select("device_id")
+      .maybeSingle();
+    if (error) return errorResponse("Could not revoke PULT device token.", 500);
+    if (!data) return errorResponse("PULT device token is already revoked or not found.", 409);
+    return json({ ok: true, deviceId, revoked: true });
+  }
+
   if (path === "/pult/result") {
     const commandId = body.commandId;
     const status = body.status;
