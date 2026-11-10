@@ -51,6 +51,15 @@ function timingSafeEqualText(a: string, b: string): boolean {
   for (let i = 0; i < aa.length; i++) diff |= aa[i] ^ bb[i];
   return diff === 0;
 }
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+function randomHex(bytes = 32): string {
+  const value = new Uint8Array(bytes);
+  crypto.getRandomValues(value);
+  return Array.from(value).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
 function bearer(req: Request): string {
   const h = req.headers.get("authorization") ?? "";
   if (/^Bearer\s+/i.test(h)) return h.replace(/^Bearer\s+/i, "").trim();
@@ -552,6 +561,233 @@ async function handleAgentApi(req: Request, path: string): Promise<Response> {
   return errorResponse("Unknown device endpoint.", 404);
 }
 
+
+async function handlePultApi(req: Request, path: string): Promise<Response> {
+  if (!db) return errorResponse("PULT Agent database is not configured.", 503);
+
+  if (path === "/pult/health" && req.method === "GET") {
+    return json({ ok: true, name: "PULT Agent Bridge", version: VERSION, status: "ready" });
+  }
+
+  if (req.method !== "POST") return errorResponse("PULT device endpoints require POST.", 405);
+
+  let body: unknown;
+  try { body = await req.json(); } catch { return errorResponse("Expected a JSON request body."); }
+  if (!isPlainObject(body)) return errorResponse("Request body must be a JSON object.");
+
+  if (path === "/pult/pair") {
+    const pairingCode = body.pairingCode;
+    const deviceId = body.deviceId;
+    const name = typeof body.name === "string" ? body.name.trim().slice(0, 100) : "PULT Chrome";
+    const version = typeof body.version === "string" ? body.version.slice(0, 40) : VERSION;
+    if (typeof pairingCode !== "string" || !/^[a-f0-9]{64}$/i.test(pairingCode)) {
+      return errorResponse("A valid single-use pairing code is required.", 401);
+    }
+    if (!validDeviceId(deviceId)) return errorResponse("Invalid deviceId.");
+    const codeHash = await sha256Hex(pairingCode.toLowerCase());
+    const now = new Date().toISOString();
+    const { data: availableCode, error: lookupError } = await db
+      .from("qun_agent_pairing_codes")
+      .select("code_hash")
+      .eq("code_hash", codeHash)
+      .is("used_at", null)
+      .gt("expires_at", now)
+      .maybeSingle();
+    if (lookupError) return errorResponse("Could not validate pairing code.", 500);
+    if (!availableCode) return errorResponse("Pairing code is invalid, expired, or already used.", 401);
+
+    const { data: consumedCode, error: consumeError } = await db
+      .from("qun_agent_pairing_codes")
+      .update({ used_at: now })
+      .eq("code_hash", codeHash)
+      .is("used_at", null)
+      .gt("expires_at", now)
+      .select("code_hash")
+      .maybeSingle();
+    if (consumeError) return errorResponse("Could not consume pairing code.", 500);
+    if (!consumedCode) return errorResponse("Pairing code was already used or expired.", 409);
+
+    const deviceToken = randomHex(32);
+    const tokenHash = await sha256Hex(deviceToken);
+    const capabilities = [
+      "browser.list_tabs",
+      "browser.read_active_page",
+      "browser.open_url",
+      "browser.execute_plan",
+    ];
+    const { data: device, error: deviceError } = await db
+      .from("qun_agent_devices")
+      .upsert({
+        device_id: deviceId,
+        name: name || "PULT Chrome",
+        platform: "browser",
+        status: "online",
+        version,
+        capabilities,
+        last_seen_at: now,
+        last_error: null,
+        updated_at: now,
+        token_hash: tokenHash,
+        revoked_at: null,
+      }, { onConflict: "device_id" })
+      .select("device_id,name,platform,status,version,capabilities,last_seen_at")
+      .single();
+    if (deviceError || !device) {
+      console.error("PULT device pairing failed:", deviceError?.message);
+      return errorResponse("Could not register PULT device.", 500);
+    }
+    return json({
+      ok: true,
+      device,
+      deviceToken,
+      notice: "Save this token in the extension. It is shown only once.",
+    }, 201);
+  }
+
+  const deviceId = body.deviceId;
+  if (!validDeviceId(deviceId)) return errorResponse("Invalid deviceId.");
+  const token = bearer(req);
+  if (!/^[a-f0-9]{64}$/i.test(token)) return errorResponse("A valid device token is required.", 401);
+  const tokenHash = await sha256Hex(token.toLowerCase());
+  const { data: device, error: deviceLookupError } = await db
+    .from("qun_agent_devices")
+    .select("device_id,platform,revoked_at")
+    .eq("device_id", deviceId)
+    .eq("token_hash", tokenHash)
+    .maybeSingle();
+  if (deviceLookupError) return errorResponse("Could not authenticate PULT device.", 500);
+  if (!device || device.revoked_at || device.platform !== "browser") {
+    return errorResponse("PULT device token is invalid or revoked.", 401);
+  }
+
+  const now = new Date().toISOString();
+  if (path === "/pult/heartbeat") {
+    const { error } = await db.from("qun_agent_devices").update({
+      status: "online",
+      last_seen_at: now,
+      last_error: null,
+      updated_at: now,
+    }).eq("device_id", deviceId).eq("token_hash", tokenHash).is("revoked_at", null);
+    if (error) return errorResponse("Could not update PULT heartbeat.", 500);
+    return json({ ok: true, deviceId, serverTime: now, version: VERSION });
+  }
+
+  if (path === "/pult/peek") {
+    const { data: command, error } = await db
+      .from("qun_agent_commands")
+      .select("command_id,device_id,action,args,status,created_at")
+      .eq("device_id", deviceId)
+      .eq("status", "queued")
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (error) return errorResponse("Could not inspect PULT queue.", 500);
+    if (!command) return json({ ok: true, command: null, serverTime: now });
+    let validationError: string | null = null;
+    if (command.action === "browser.execute_plan") {
+      try {
+        command.args = { steps: validateBrowserSteps((command.args as Record<string, unknown>)?.steps) };
+      } catch (e) {
+        validationError = e instanceof Error ? e.message : String(e);
+      }
+    }
+    return json({ ok: true, command, validationError, serverTime: now });
+  }
+
+  if (path === "/pult/claim") {
+    const commandId = body.commandId;
+    if (typeof commandId !== "string" || !/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(commandId)) {
+      return errorResponse("A valid commandId is required.");
+    }
+    const { error: renewError } = await db.from("qun_agent_commands")
+      .update({ status: "queued", started_at: null, lease_expires_at: null, updated_at: now })
+      .eq("device_id", deviceId).eq("status", "leased").lt("lease_expires_at", now);
+    if (renewError) return errorResponse("Could not recover an expired lease.", 500);
+
+    const { data: candidate, error: selectError } = await db
+      .from("qun_agent_commands")
+      .select("command_id,device_id,action,args,status,created_at")
+      .eq("command_id", commandId)
+      .eq("device_id", deviceId)
+      .eq("status", "queued")
+      .maybeSingle();
+    if (selectError) return errorResponse("Could not read queued PULT command.", 500);
+    if (!candidate) return errorResponse("Command is no longer queued or belongs to another device.", 409);
+
+    if (candidate.action === "browser.execute_plan") {
+      try {
+        candidate.args = { steps: validateBrowserSteps((candidate.args as Record<string, unknown>)?.steps) };
+      } catch (e) {
+        const message = (e instanceof Error ? e.message : String(e)).slice(0, 2000);
+        await db.from("qun_agent_commands").update({
+          status: "failed", error_message: "Invalid browser plan: " + message,
+          completed_at: now, updated_at: now,
+        }).eq("command_id", commandId).eq("device_id", deviceId).eq("status", "queued");
+        return errorResponse("Queued browser plan rejected: " + message, 422);
+      }
+    }
+    const leaseUntil = new Date(Date.now() + COMMAND_LEASE_MS).toISOString();
+    const { data: claimed, error: claimError } = await db.from("qun_agent_commands")
+      .update({ status: "leased", started_at: now, lease_expires_at: leaseUntil, updated_at: now })
+      .eq("command_id", commandId).eq("device_id", deviceId).eq("status", "queued")
+      .select("command_id,device_id,action,args,status")
+      .maybeSingle();
+    if (claimError) return errorResponse("Could not claim PULT command.", 500);
+    if (!claimed) return errorResponse("Command was claimed by another executor.", 409);
+    return json({ ok: true, command: claimed, serverTime: now });
+  }
+
+  if (path === "/pult/reject") {
+    const commandId = body.commandId;
+    if (typeof commandId !== "string" || !/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(commandId)) {
+      return errorResponse("A valid commandId is required.");
+    }
+    const { data, error } = await db.from("qun_agent_commands")
+      .update({ status: "cancelled", completed_at: now, updated_at: now })
+      .eq("command_id", commandId).eq("device_id", deviceId).eq("status", "queued")
+      .select("command_id,status").maybeSingle();
+    if (error) return errorResponse("Could not reject PULT command.", 500);
+    if (!data) return errorResponse("Command is no longer queued or was not found.", 409);
+    return json({ ok: true, commandId, status: "cancelled" });
+  }
+
+  if (path === "/pult/result") {
+    const commandId = body.commandId;
+    const status = body.status;
+    if (typeof commandId !== "string" || !/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(commandId)) {
+      return errorResponse("A valid commandId is required.");
+    }
+    if (status !== "succeeded" && status !== "failed") {
+      return errorResponse("status must be succeeded or failed.");
+    }
+    const result = body.result === undefined ? null : body.result;
+    const resultText = JSON.stringify(result);
+    if (resultText && resultText.length > 60_000) return errorResponse("Command result exceeds the 60 KB limit.");
+    const errorMessage = typeof body.error === "string" ? body.error.slice(0, 2000) : null;
+
+    const { data, error } = await db.from("qun_agent_commands")
+      .update({
+        status,
+        result: status === "succeeded" ? (result ?? {}) : null,
+        error_message: status === "failed" ? (errorMessage || "PULT browser action failed.") : null,
+        completed_at: now,
+        lease_expires_at: null,
+        updated_at: now,
+      })
+      .eq("command_id", commandId).eq("device_id", deviceId).eq("status", "leased")
+      .select("command_id,status").maybeSingle();
+    if (error) return errorResponse("Could not save PULT command result.", 500);
+    if (!data) return errorResponse("Command is not leased by this device.", 409);
+    await db.from("qun_agent_devices").update({
+      status: "online", last_seen_at: now,
+      last_error: status === "failed" ? errorMessage : null, updated_at: now,
+    }).eq("device_id", deviceId).eq("token_hash", tokenHash).is("revoked_at", null);
+    return json({ ok: true, commandId, status, serverTime: now });
+  }
+
+  return errorResponse("Unknown PULT device endpoint.", 404);
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders });
   const path = getRoute(req);
@@ -570,6 +806,7 @@ Deno.serve(async (req: Request) => {
     });
   }
   if (path === "/mcp" || path === "/") return await handleMcp(req);
+  if (path.startsWith("/pult/")) return await handlePultApi(req, path);
   if (path.startsWith("/agent/")) return await handleAgentApi(req, path);
   return errorResponse("Not found.", 404);
 });
