@@ -201,10 +201,10 @@ async function executePlanLocally(plan) {
 function normalizeApiBaseUrl(value) {
   let parsed;
   try { parsed = new URL(String(value || "").trim()); }
-  catch { throw new Error("Укажи корректный HTTPS-адрес PULT API."); }
+  catch { throw new Error("Укажи корректный HTTPS-адрес QUN Agent Core."); }
   const localHost = ["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname);
   if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && localHost)) {
-    throw new Error("PULT API должен использовать HTTPS. HTTP разрешён только для localhost при разработке.");
+    throw new Error("API должен использовать HTTPS. HTTP разрешён только для localhost при разработке.");
   }
   if (parsed.username || parsed.password || parsed.search || parsed.hash) {
     throw new Error("Адрес API не должен содержать логин, пароль, параметры или фрагмент.");
@@ -229,14 +229,13 @@ async function apiRequest(settings, path, options = {}) {
     });
     let payload;
     try { payload = await response.json(); }
-    catch { throw new Error("PULT API вернул не JSON. Проверь URL и настройки сервера."); }
+    catch { throw new Error("QUN Agent Core вернул не JSON. Проверь адрес API."); }
     if (!response.ok || !payload || payload.ok !== true) {
-      const error = payload && payload.error;
-      throw new Error((error && error.message) || ("Ошибка PULT API: HTTP " + response.status));
+      throw new Error((payload && payload.error) || ("Ошибка QUN Agent Core: HTTP " + response.status));
     }
-    return payload.data || {};
+    return payload;
   } catch (error) {
-    if (error && error.name === "AbortError") throw new Error("PULT API не ответил за 15 секунд.");
+    if (error && error.name === "AbortError") throw new Error("QUN Agent Core не ответил за 15 секунд.");
     throw error;
   } finally {
     clearTimeout(timer);
@@ -253,71 +252,166 @@ async function getApiSettings() {
   };
 }
 
-async function pairApiDevice(message) {
+async function connectAgentDevice(message) {
   const baseUrl = normalizeApiBaseUrl(message.baseUrl);
-  const pairingSecret = String(message.pairingSecret || "").trim();
-  const deviceName = String(message.deviceName || "PULT Chrome").trim().slice(0, 120);
-  if (pairingSecret.length < 32) throw new Error("Код подключения должен содержать не менее 32 символов.");
-  const data = await apiRequest({ baseUrl, token: "" }, "/v1/devices/pair", {
-    body: { pairing_secret: pairingSecret, device_name: deviceName }
+  const pairingCode = String(message.pairingCode || "").trim().toLowerCase();
+  const deviceId = String(message.deviceId || "pult-chrome-main").trim().toLowerCase();
+  const name = String(message.deviceName || "PULT Chrome").trim().slice(0, 100) || "PULT Chrome";
+  if (!/^[a-f0-9]{64}$/.test(pairingCode)) {
+    throw new Error("Код подключения должен быть одноразовым кодом из 64 шестнадцатеричных символов.");
+  }
+  if (!/^[a-z0-9][a-z0-9-]{2,63}$/.test(deviceId)) {
+    throw new Error("ID устройства: латиница в нижнем регистре, цифры и дефисы; 3–64 символа.");
+  }
+
+  const response = await apiRequest({ baseUrl, token: "" }, "/pult/pair", {
+    body: { pairingCode, deviceId, name, version: "0.3.0" }
   });
-  if (!data.device_token || !data.device_id) throw new Error("Сервер не вернул данные подключённого устройства.");
+  if (!response.deviceToken || !response.device || response.device.device_id !== deviceId) {
+    throw new Error("Сервер не вернул корректные данные подключённого устройства.");
+  }
   await chrome.storage.local.set({
     apiBaseUrl: baseUrl,
-    apiDeviceToken: data.device_token,
-    apiDeviceId: data.device_id,
-    apiDeviceName: data.device_name || deviceName
+    apiDeviceToken: response.deviceToken,
+    apiDeviceId: deviceId,
+    apiDeviceName: response.device.name || name
   });
-  return { connected: true, deviceId: data.device_id, deviceName: data.device_name || deviceName };
+  await startAgentAlarm();
+  await checkAgentQueue();
+  return { connected: true, deviceId, deviceName: response.device.name || name };
 }
 
-async function executePlan(plan) {
-  validatePlan(plan);
-  const settings = await getApiSettings();
-  if (!settings.baseUrl || !settings.token) {
-    return executePlanLocally(plan);
-  }
-
-  const created = await apiRequest(settings, "/v1/jobs", {
-    body: { client_name: "pult-chatgpt-bridge", plan }
+async function agentHeartbeat(settings) {
+  return apiRequest(settings, "/pult/heartbeat", {
+    body: { deviceId: settings.deviceId }
   });
-  if (!created.job_id) throw new Error("PULT API не вернул идентификатор задания.");
+}
 
-  await apiRequest(settings, "/v1/jobs/" + created.job_id + "/approve", { body: {} });
-  const claimed = await apiRequest(settings, "/v1/jobs/claim", { body: { job_id: created.job_id } });
-  if (!claimed.plan || !Array.isArray(claimed.plan.steps)) {
-    throw new Error("PULT API вернул задание без корректного плана.");
+async function peekAgentCommand(settings) {
+  await agentHeartbeat(settings);
+  return apiRequest(settings, "/pult/peek", {
+    body: { deviceId: settings.deviceId }
+  });
+}
+
+async function checkAgentQueue() {
+  const settings = await getApiSettings();
+  if (!settings.baseUrl || !settings.token || !settings.deviceId) {
+    try { await chrome.action.setBadgeText({ text: "" }); } catch {}
+    return { connected: false, command: null };
   }
+  try {
+    const data = await peekAgentCommand(settings);
+    if (data.command && data.command.command_id) {
+      await chrome.action.setBadgeBackgroundColor({ color: "#16835d" });
+      await chrome.action.setBadgeText({ text: "1" });
+      await chrome.action.setTitle({ title: "PULT: ожидает подтверждения задания" });
+      await chrome.storage.local.set({ pultPendingCommandId: data.command.command_id });
+    } else {
+      await chrome.action.setBadgeText({ text: "" });
+      await chrome.action.setTitle({ title: "PULT Lite — браузерный агент подключён" });
+      await chrome.storage.local.remove("pultPendingCommandId");
+    }
+    return { connected: true, command: data.command || null, validationError: data.validationError || null };
+  } catch (error) {
+    await chrome.action.setTitle({ title: "PULT API: " + (error.message || String(error)).slice(0, 100) });
+    return { connected: true, error: error.message || String(error), command: null };
+  }
+}
+
+async function executeAgentCommand(command) {
+  const args = command.args && typeof command.args === "object" ? command.args : {};
+  switch (command.action) {
+    case "browser.execute_plan":
+      return executePlanLocally({ steps: args.steps });
+    case "browser.open_url":
+      if (typeof args.url !== "string") throw new Error("В команде browser.open_url отсутствует URL.");
+      return executePlanLocally({ steps: [{ action: "navigate", url: args.url }] });
+    case "browser.read_active_page":
+      return executePlanLocally({ steps: [{ action: "read_page" }] });
+    case "browser.list_tabs":
+      return {
+        ok: true,
+        tabs: (await listBrowserTabs()).slice(0, 40),
+        completed_at: new Date().toISOString()
+      };
+    default:
+      throw new Error("PULT не поддерживает действие «" + String(command.action) + "».");
+  }
+}
+
+async function executeQueuedAgentCommand(commandId) {
+  const settings = await getApiSettings();
+  if (!settings.baseUrl || !settings.token || !settings.deviceId) {
+    throw new Error("Сначала подключи PULT к QUN Agent Core.");
+  }
+  const claim = await apiRequest(settings, "/pult/claim", {
+    body: { deviceId: settings.deviceId, commandId }
+  });
+  const command = claim.command;
+  if (!command) throw new Error("Сервер не передал задание на выполнение.");
 
   let result;
   try {
-    result = await executePlanLocally(claimed.plan);
+    result = await executeAgentCommand(command);
   } catch (error) {
     result = {
       ok: false,
       tab: {},
-      results: [{ action: "execute", ok: false, error: error.message || String(error) }],
+      results: [{ action: command.action, ok: false, error: error.message || String(error) }],
       completed_at: new Date().toISOString()
     };
   }
 
+  let syncError = null;
   try {
-    const completed = await apiRequest(settings, "/v1/jobs/" + created.job_id + "/complete", {
-      body: { result }
+    await apiRequest(settings, "/pult/result", {
+      body: {
+        deviceId: settings.deviceId,
+        commandId: command.command_id,
+        status: result.ok ? "succeeded" : "failed",
+        result,
+        error: result.ok ? undefined : (result.results || []).map(item => item.error || item.action).filter(Boolean).join("; ").slice(0, 2000)
+      }
     });
-    result.api = { connected: true, job_id: created.job_id, status: completed.status || "completed" };
   } catch (error) {
-    result.api = {
-      connected: true,
-      job_id: created.job_id,
-      sync_error: error.message || String(error)
-    };
-    await chrome.storage.local.set({ pultUnsyncedResult: { jobId: created.job_id, result } });
+    syncError = error.message || String(error);
   }
 
-  await chrome.storage.local.set({ lastResult: result });
+  const finalResult = {
+    ...result,
+    pultCommandId: command.command_id,
+    pultAction: command.action,
+    api: syncError ? { synced: false, error: syncError } : { synced: true, status: result.ok ? "succeeded" : "failed" }
+  };
+  await chrome.storage.local.set({ lastResult: finalResult });
+  await checkAgentQueue();
+  return { ok: true, result: finalResult, commandId: command.command_id };
+}
+
+async function rejectQueuedAgentCommand(commandId) {
+  const settings = await getApiSettings();
+  if (!settings.baseUrl || !settings.token || !settings.deviceId) {
+    throw new Error("Сначала подключи PULT к QUN Agent Core.");
+  }
+  const result = await apiRequest(settings, "/pult/reject", {
+    body: { deviceId: settings.deviceId, commandId }
+  });
+  await checkAgentQueue();
   return result;
 }
+
+const AGENT_ALARM = "pult-agent-queue-check";
+async function startAgentAlarm() {
+  try {
+    await chrome.alarms.create(AGENT_ALARM, { periodInMinutes: 0.5 });
+  } catch {}
+}
+chrome.runtime.onInstalled.addListener(() => { startAgentAlarm(); });
+chrome.runtime.onStartup.addListener(() => { startAgentAlarm(); });
+chrome.alarms.onAlarm.addListener(alarm => {
+  if (alarm && alarm.name === AGENT_ALARM) checkAgentQueue();
+});
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   (async () => {
@@ -341,11 +435,27 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       return { ok: true, connected: Boolean(settings.baseUrl && settings.token), baseUrl: settings.baseUrl, deviceId: settings.deviceId, deviceName: settings.deviceName };
     }
     if (message && message.type === "PULT_API_PAIR") {
-      return { ok: true, device: await pairApiDevice(message) };
+      return { ok: true, device: await connectAgentDevice(message) };
     }
     if (message && message.type === "PULT_API_DISCONNECT") {
-      await chrome.storage.local.remove(["apiBaseUrl", "apiDeviceToken", "apiDeviceId", "apiDeviceName"]);
+      const settings = await getApiSettings();
+      if (settings.baseUrl && settings.token && settings.deviceId) {
+        await apiRequest(settings, "/pult/disconnect", { body: { deviceId: settings.deviceId } });
+      }
+      await chrome.storage.local.remove(["apiBaseUrl", "apiDeviceToken", "apiDeviceId", "apiDeviceName", "pultPendingCommandId"]);
+      await chrome.action.setBadgeText({ text: "" });
       return { ok: true, disconnected: true };
+    }
+    if (message && message.type === "PULT_AGENT_PEEK") {
+      return { ok: true, ...(await checkAgentQueue()) };
+    }
+    if (message && message.type === "PULT_AGENT_EXECUTE_PENDING") {
+      if (typeof message.commandId !== "string") throw new Error("Не передан ID задания.");
+      return await executeQueuedAgentCommand(message.commandId);
+    }
+    if (message && message.type === "PULT_AGENT_REJECT") {
+      if (typeof message.commandId !== "string") throw new Error("Не передан ID задания.");
+      return { ok: true, result: await rejectQueuedAgentCommand(message.commandId) };
     }
     if (message && message.type === "PULT_EXECUTE_PLAN") return { ok: true, result: await executePlan(message.plan) };
     if (message && message.type === "PULT_GET_LAST_RESULT") {
