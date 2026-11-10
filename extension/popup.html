@@ -13,6 +13,31 @@
       <div><h1>PULT Lite</h1><p>Управление вкладкой через ChatGPT</p></div>
     </header>
     <section>
+      <label for="apiUrl">Адрес QUN Agent Core</label>
+      <input id="apiUrl" type="url" value="https://qdxjltqlnphvzafapncm.supabase.co/functions/v1/qun-agent-core">
+      <label for="deviceId">ID устройства</label>
+      <input id="deviceId" type="text" value="pult-chrome-main" maxlength="64">
+      <label for="deviceName">Название устройства</label>
+      <input id="deviceName" type="text" value="PULT Chrome" maxlength="100">
+      <label for="pairingSecret">Одноразовый код подключения</label>
+      <input id="pairingSecret" type="password" autocomplete="off" placeholder="Код действует один раз">
+      <div class="line api-actions">
+        <button id="apiConnect" class="primary">Подключить Supabase</button>
+        <button id="apiDisconnect" class="secondary" disabled>Отключить</button>
+      </div>
+      <div id="apiStatus" class="muted">Локальный режим. Подключение к Supabase не настроено.</div>
+    </section>
+    <section>
+      <label>Очередь заданий PULT</label>
+      <button id="queueRefresh" class="secondary full">Проверить очередь</button>
+      <div id="queueStatus" class="muted">Нет проверенных заданий.</div>
+      <pre id="queuePreview" aria-live="polite">Здесь появится следующее задание.</pre>
+      <div class="line api-actions">
+        <button id="queueExecute" class="primary" disabled>Подтвердить и выполнить</button>
+        <button id="queueReject" class="secondary" disabled>Отклонить</button>
+      </div>
+    </section>
+    <section>
       <label for="target">Вкладка для управления</label>
       <div class="line"><select id="target"></select><button id="refresh" class="secondary" title="Обновить список">↻</button></div>
       <div id="selectedUrl" class="muted"></div>
