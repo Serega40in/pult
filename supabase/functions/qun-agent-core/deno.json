@@ -1,0 +1,7 @@
+{
+  "imports": {
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2.57.4",
+    "@modelcontextprotocol/sdk/": "npm:@modelcontextprotocol/sdk@1.25.3/",
+    "zod": "npm:zod@4.1.13"
+  }
+}
