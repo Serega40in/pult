@@ -66,6 +66,36 @@
       insert.textContent = inserted ? "Результат добавлен в поле сообщения" : "Не найдено поле сообщения — скопируй результат из блока выше";
     });
     wrapper.appendChild(insert);
+
+    // A second, explicit user click can submit the verified result back to ChatGPT.
+    // It never sends anything automatically after a browser plan finishes.
+    const sendBack = document.createElement("button");
+    sendBack.type = "button";
+    sendBack.textContent = "↩ Добавить и отправить результат";
+    sendBack.style.cssText = "margin-left:6px;padding:7px 10px;border:0;border-radius:8px;background:#16835d;color:#fff;cursor:pointer";
+    sendBack.addEventListener("click", async () => {
+      sendBack.disabled = true;
+      const text = "Результат выполнения PULT:\\n" + JSON.stringify(result, null, 2) + "\\n\\nПродолжи задачу с учётом фактического результата.";
+      const inserted = insertIntoComposer(text);
+      if (!inserted) {
+        sendBack.disabled = false;
+        sendBack.textContent = "Не удалось вставить — скопируй результат выше";
+        return;
+      }
+      sendBack.textContent = "Текст добавлен…";
+      await new Promise(resolve => setTimeout(resolve, 250));
+      const submit = document.querySelector('button[data-testid="send-button"]') ||
+        document.querySelector('button[aria-label="Send prompt"]') ||
+        document.querySelector('button[aria-label="Отправить сообщение"]');
+      if (submit && !submit.disabled) {
+        submit.click();
+        sendBack.textContent = "✓ Результат отправлен в чат";
+      } else {
+        sendBack.disabled = false;
+        sendBack.textContent = "Текст вставлен — нажми «Отправить»";
+      }
+    });
+    wrapper.appendChild(sendBack);
     anchor.insertAdjacentElement("afterend", wrapper);
   }
 
